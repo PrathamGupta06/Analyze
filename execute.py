@@ -26,13 +26,14 @@ def _safe_float(x: Any) -> Any:
 
 
 def main() -> None:
-    # Read the data (Excel file). This will raise a clear error if file is missing.
-    df = pd.read_excel("data.xlsx")
+    # Read the data (Excel file). Specify the openpyxl engine to be explicit and
+    # avoid engine autodetection issues across pandas versions/environments.
+    df = pd.read_excel("data.xlsx", engine="openpyxl")
 
     # Ensure expected columns exist
     expected = {"date", "region", "product", "units", "price"}
+    # If columns are present but have different casing, normalize to lowercase
     if not expected.issubset(set(df.columns.str.lower())):
-        # Try normalizing column names to lower-case mapping if possible
         cols_map = {c: c.lower() for c in df.columns}
         df = df.rename(columns=cols_map)
 
@@ -89,7 +90,7 @@ def main() -> None:
             last_val = None
         else:
             last_val = _safe_float(rolling.iloc[-1])
-        rolling_summary[region] = last_val
+        rolling_summary[str(region)] = last_val
 
     result = {
         "row_count": int(row_count),
