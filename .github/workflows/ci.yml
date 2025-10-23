@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pandas==2.3 openpyxl
+
+      - name: Run ruff (show results)
+        # We don't fail the job on lint findings so the results are shown in the log
+        run: |
+          ruff check . || true
+
+      - name: Run execute.py and write result.json
+        run: |
+          python execute.py > result.json
+
+      - name: Prepare artifact for Pages
+        run: |
+          mkdir -p public
+          cp result.json public/result.json
+
+      - name: Upload artifact for GitHub Pages
+        uses: actions/upload-pages-artifact@v1
+        with:
+          path: public
+
+  deploy:
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v1
+

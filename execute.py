@@ -1,60 +1,95 @@
+"""execute.py
+
+Reads sales data from data.xlsx and outputs a small JSON summary to stdout.
+Designed to run with Python 3.11+ and pandas 2.3.
+
+Fixes included:
+- Removed typo "revenew" and used the correct "revenue" column throughout.
+- Corrected rolling 7-day computation by grouping per region and using a time-based rolling window.
+- Made the code robust to missing values and ensures JSON-serializable output.
+"""
+
 import json
+from typing import Any, Dict
 
 import pandas as pd
 
 
-def main():
-    # Read the data
+def _safe_float(x: Any) -> Any:
+    """Convert numeric values to float for JSON; return None for NaN/NA."""
+    try:
+        if pd.isna(x):
+            return None
+        return float(x)
+    except Exception:
+        return None
+
+
+def main() -> None:
+    # Read the data (Excel file). This will raise a clear error if file is missing.
     df = pd.read_excel("data.xlsx")
 
-    # Compute revenue
+    # Ensure expected columns exist
+    expected = {"date", "region", "product", "units", "price"}
+    if not expected.issubset(set(df.columns.str.lower())):
+        # Try normalizing column names to lower-case mapping if possible
+        cols_map = {c: c.lower() for c in df.columns}
+        df = df.rename(columns=cols_map)
+
+    # Now required columns should exist (raises KeyError with informative message otherwise)
+    if not expected.issubset(set(df.columns)):
+        raise KeyError(
+            f"Input must contain columns: {expected}. Found: {set(df.columns)}"
+        )
+
+    # Ensure types
+    df["date"] = pd.to_datetime(df["date"])  # ensure datetime
+    df["units"] = pd.to_numeric(df["units"], errors="coerce").fillna(0)
+    df["price"] = pd.to_numeric(df["price"], errors="coerce").fillna(0.0)
+
+    # Compute revenue (units * price)
     df["revenue"] = df["units"] * df["price"]
 
     # row_count
-    row_count = len(df)
+    row_count = int(len(df))
 
     # regions: count of distinct regions
-    regions_count = df["region"].nunique()
+    regions_count = int(df["region"].nunique())
 
-    # top_n_products_by_revenue (n=3)"""  """
+    # top_n_products_by_revenue (n=3)
     n = 3
     top_products = (
-        df.groupby("product")["revenue"]
-        .sum()  # Intentional bug: wrong column name
-        .sort_values(ascending=False)
+        df.groupby("product", as_index=False)["revenue"]
+        .sum()
+        .sort_values("revenue", ascending=False)
         .head(n)
-        .reset_index()
     )
     top_products_list = [
-        {"product": row["product"], "revenue": float(row["revenue"])}
+        {"product": row["product"], "revenue": _safe_float(row["revenue"]) }
         for _, row in top_products.iterrows()
     ]
 
     # rolling_7d_revenue_by_region: for each region, last value of 7-day moving average of daily revenue
-    df["date"] = pd.to_datetime(df["date"])  # ensure datetime
     daily_rev = (
-        df.groupby(["region", "date"])["revenew"]  # daily revenue per region
+        df.groupby(["region", "date"], as_index=False)["revenue"]
         .sum()
-        .reset_index()
         .sort_values(["region", "date"])  # ensure sorted for rolling
     )
 
-    # Compute 7-day rolling mean of revenue per region, retaining the region column
-    rolling = (
-        daily_rev.groupby("region")
-        .apply(lambda g: g.set_index("date")["revenue"].rolling("7D").mean(), include_groups=False)
-        .reset_index(name="rolling_7d_revenue")
-    )
+    rolling_summary: Dict[str, Any] = {}
 
-    last_rolling = (
-        rolling.sort_values(["region", "date"])  # ensure order
-        .groupby("region")
-        .tail(1)
-    )
-
-    rolling_summary = {
-        row["region"]: float(row["rolling_7d_revenue"]) for _, row in last_rolling.iterrows()
-    }
+    # For each region, compute a time-based 7-day rolling mean on daily revenue and capture the last value.
+    for region, g in daily_rev.groupby("region"):
+        # Ensure sorted by date and set index for time-based rolling
+        g = g.sort_values("date").set_index("date")
+        # Calculate 7-day rolling mean (time-based window)
+        # Using rolling with a time offset string requires a DatetimeIndex
+        rolling = g["revenue"].rolling("7D").mean()
+        if len(rolling) == 0:
+            last_val = None
+        else:
+            last_val = _safe_float(rolling.iloc[-1])
+        rolling_summary[region] = last_val
 
     result = {
         "row_count": int(row_count),
